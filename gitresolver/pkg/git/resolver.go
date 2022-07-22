@@ -26,10 +26,12 @@ import (
 
 	"github.com/go-git/go-billy/v5/memfs"
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/storage/memory"
 	resolutioncommon "github.com/tektoncd/resolution/pkg/common"
 	"github.com/tektoncd/resolution/pkg/resolver/framework"
+	"knative.dev/pkg/logging"
 )
 
 // LabelValueGitResolverType is the value to use for the
@@ -88,10 +90,6 @@ func (r *Resolver) ValidateParams(_ context.Context, params map[string]string) e
 		return fmt.Errorf("missing %v", strings.Join(missing, ", "))
 	}
 
-	if params[CommitParam] != "" && params[BranchParam] != "" {
-		return fmt.Errorf("supplied both %q and %q", CommitParam, BranchParam)
-	}
-
 	// TODO(sbwsg): validate repo url is well-formed, git:// or https://
 	// TODO(sbwsg): validate pathInRepo is valid relative pathInRepo
 
@@ -101,6 +99,7 @@ func (r *Resolver) ValidateParams(_ context.Context, params map[string]string) e
 // Resolve performs the work of fetching a file from git given a map of
 // parameters.
 func (r *Resolver) Resolve(ctx context.Context, params map[string]string) (framework.ResolvedResource, error) {
+	//logging.FromContext(ctx).Info("error getting latest generation of resolutionrequest %q: %v", key, err)
 	conf := framework.GetResolverConfigFromContext(ctx)
 	repo := params[URLParam]
 	if repo == "" {
@@ -110,33 +109,28 @@ func (r *Resolver) Resolve(ctx context.Context, params map[string]string) (frame
 			return nil, fmt.Errorf("default Git Repo Url  was not set during installation of the git resolver")
 		}
 	}
-	commit := params[CommitParam]
-	branch := params[BranchParam]
-	if commit == "" && branch == "" {
-		if branchString, ok := conf[ConfigBranch]; ok {
-			branch = branchString
-		}
-	}
-	path := params[PathParam]
 
+	path := params[PathParam]
 	cloneOpts := &git.CloneOptions{
 		URL: repo,
 	}
 	filesystem := memfs.New()
-	if branch != "" {
-		cloneOpts.SingleBranch = true
-		cloneOpts.ReferenceName = plumbing.NewBranchReferenceName(branch)
-	}
+
 	repository, err := git.Clone(memory.NewStorage(), filesystem, cloneOpts)
 	if err != nil {
 		return nil, fmt.Errorf("clone error: %w", err)
 	}
-	if commit == "" {
-		headRef, err := repository.Head()
-		if err != nil {
-			return nil, fmt.Errorf("error reading repository HEAD value: %w", err)
-		}
-		commit = headRef.Hash().String()
+
+	revision := params[RevisionParam]
+	logging.FromContext(ctx).Info("Quan Testing %s", revision)
+	refSpec := config.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/remotes/%s", revision, revision))
+	err = repository.Fetch(&git.FetchOptions{
+		RefSpecs: []config.RefSpec{refSpec},
+	})
+
+	// Quan TODO: better error handling
+	if err != nil {
+		fmt.Printf("the revision %s is not branch name, continuing with default branch...", revision)
 	}
 
 	w, err := repository.Worktree()
@@ -144,9 +138,16 @@ func (r *Resolver) Resolve(ctx context.Context, params map[string]string) (frame
 		return nil, fmt.Errorf("worktree error: %v", err)
 	}
 
+	h, err := repository.ResolveRevision(plumbing.Revision(revision))
+	if err != nil {
+		return nil, fmt.Errorf("revision error: %v", err)
+	}
+
+	// checkout to the revision based on hash
 	err = w.Checkout(&git.CheckoutOptions{
-		Hash: plumbing.NewHash(commit),
+		Hash: *h,
 	})
+
 	if err != nil {
 		return nil, fmt.Errorf("checkout error: %v", err)
 	}
@@ -162,8 +163,11 @@ func (r *Resolver) Resolve(ctx context.Context, params map[string]string) (frame
 		return nil, fmt.Errorf("error reading file %q: %v", path, err)
 	}
 
+	logging.FromContext(ctx).Info("Quan Testing: ")
+	logging.FromContext(ctx).Info(buf)
+
 	return &ResolvedGitResource{
-		Commit:  commit,
+		Commit:  revision,
 		Content: buf.Bytes(),
 	}, nil
 }

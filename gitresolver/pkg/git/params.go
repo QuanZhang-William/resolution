@@ -22,8 +22,5 @@ const URLParam string = "url"
 // PathParam is the pathInRepo into the git repo where a file is located
 const PathParam string = "pathInRepo"
 
-// CommitParam is the commit hash that a file should be fetched from
-const CommitParam string = "commit"
-
-// BranchParam is the git branch that a file should be fetched from
-const BranchParam string = "branch"
+// BranchParam is the git revision that should be referenced
+const RevisionParam string = "revision"
